@@ -1,0 +1,4 @@
+.reach/smt-cache/*
+build/
+.vscode
+test.js
