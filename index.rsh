@@ -45,48 +45,71 @@ export const main = Reach.App(() => {
     Alice.only(()=> {
         const wager = declassify(interact.wager)
         const deadline = declassify(interact.deadline)
-        const _handAlice = interact.getHand()
-        const [_commitAlice, _saltAlice ] = makeCommitment(interact,_handAlice)
-        const commitAlice = declassify(_commitAlice)
     })
 
-    Alice.publish(wager,commitAlice,deadline)
+    Alice.publish(wager,deadline)
         .pay(wager)
 
     commit()
-
-    unknowable(Bob,Alice(_handAlice, _saltAlice))
 
     Bob.only(() => {
         interact.acceptWager(wager)
-        const handBob = declassify(interact.getHand())
     })
 
-    Bob.publish(handBob)
-        .pay(wager)
+    Bob.pay(wager)
         .timeout(relativeTime(deadline), () => closeTo(Alice, InformTimeout))
 
-    commit()
+    var outcome = DRAW
+    invariant(balance() == 2 * wager && isOutcome(outcome))
 
-    Alice.only(() => {
-        const saltAlice = declassify(_saltAlice)
-        const handAlice = declassify(_handAlice)
-    })
+    while( outcome == DRAW ){
+        //commit bobs changes in the previous step
+        commit()
+        
+        Alice.only(() => {
+            const _handAlice = interact.getHand()
+            const [ _commitAlice,_saltAlice ] = makeCommitment(interact, _handAlice)
+            const commitAlice = declassify(_commitAlice)
+        })
 
-    Alice.publish(saltAlice, handAlice)
-    .timeout(relativeTime(deadline), () => closeTo(Alice, InformTimeout))
+        Alice.publish(commitAlice)
+            .timeout(relativeTime(deadline), () => closeTo(Alice, InformTimeout))
 
-    checkCommitment(commitAlice, saltAlice, handAlice)
+        //now commit Alice's step
+        commit()
 
-    const outcome = winner(handAlice, handBob)
+        //check that Alice's hand and salt are unknown to Bob before Bob submits his hand
+        unknowable(Bob, Alice(_handAlice,_saltAlice))
 
-    const [forAlice, forBob ] = 
-        outcome == A_WINS ? [2,0]:
-        outcome == B_WINS ? [0,2]:
-        [1,1] /* tie */          
+        Bob.only(() => {
+            const handBob =  declassify(interact.getHand())
+        })
 
-    transfer(forAlice * wager).to(Alice)
-    transfer(forBob * wager).to(Bob)
+        Bob.publish(handBob)
+            .timeout(relativeTime(deadline), () => closeTo(Bob, InformTimeout))
+
+        //now commit changes in Bob's step
+        commit()
+
+        Alice.only(() => {
+            const saltAlice = declassify(_saltAlice)
+            const handAlice = declassify(_handAlice)
+        })
+
+        Alice.publish(saltAlice,handAlice)
+            .timeout(relativeTime(deadline), () => closeTo(Alice, InformTimeout))
+
+        //check that the saltAlice and hand Alice matches the commitment
+        checkCommitment(commitAlice,saltAlice,handAlice)
+
+        outcome = winner(handAlice,handBob)
+
+        continue
+    }
+
+    // check that there can only be one winner and no DRAW
+    assert(outcome == A_WINS || outcome == B_WINS)
+    transfer(2 * wager).to(outcome == A_WINS ? Alice : Bob)
     commit()
 
     each([Alice, Bob], () => {
